@@ -29,7 +29,7 @@ SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
 CLIENT_SECRET_FILE = 'client_id.json'
 APPLICATION_NAME = 'Google Calendar Alarm'
 
-logging.basicConfig(filename='wakeup.log', filemode='w')
+#logging.basicConfig(filename='gcal.log', filemode='w')
 
 # Global configuration settings
 from ConfigParser import SafeConfigParser
