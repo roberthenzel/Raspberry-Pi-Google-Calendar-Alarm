@@ -1,12 +1,10 @@
-# Simple calendar alarm
-# Requires sound
-# Author: Boyana Norris, brnorris03@gmail.com
-#
-# Disclaimer: Use at your own risk, no guarantees of continued or correct operation provided.
+
 
 from __future__ import print_function
 import httplib2
-import os, time
+import json
+import os, time, subprocess
+from gpiozero import Button
 
 from apiclient import discovery
 import oauth2client
@@ -14,7 +12,6 @@ from oauth2client import client
 from oauth2client import tools
 
 from datetime import datetime, timedelta
-import logging
 
 try:
     import argparse
@@ -22,27 +19,59 @@ try:
 except ImportError:
     flags = None
 
-
 # If modifying these scopes, delete your previously saved credentials
 # at ~/.credentials/calendar-python-quickstart.json
 SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
 CLIENT_SECRET_FILE = 'client_id.json'
 APPLICATION_NAME = 'Google Calendar Alarm'
 
-#logging.basicConfig(filename='gcal.log', filemode='w')
-
 # Global configuration settings
 from ConfigParser import SafeConfigParser
 parser = SafeConfigParser()           # initiate Parser and read the configuration file
 parser.read('gcal.cfg')
 
-q = parser.get('alarm','query')
+apiKey = parser.get('alarm','key')
+
 try:
   sound = parser.get('alarm', 'sound')
-except: sound = os.path.join('sounds','oceanwaves.wav')
+except: sound = os.path.join('sounds','alarm.wav')
 calendar = parser.get('alarm', 'calendar')
-date = (datetime.now() +timedelta(days=-1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-endDate = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+try:
+  startSound = parser.get('alarm', 'sound')
+except: startSound = os.path.join('sounds','carillon.wav')
+
+
+try:
+    import ssl
+except ImportError:
+    print ("error: no ssl support")
+
+#Global variables
+alarmLocation = 'Gliwice'
+button = Button(4)
+case = 'checkCalendar'
+sleepTime = 60           #Time between calendar checking in seconds
+reminderTime = 900      #Defualt reminder time in seconds; set to 15 minutes
+ignoredEvents = []
+
+def calendarReady():
+    args = ["aplay",startSound]
+    alarm = subprocess.Popen(args)
+    return
+
+
+def travelTimeTo(eventLocation):
+    distanceURL = "https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=" + alarmLocation +"&destinations=" + eventLocation + "&key=" + apiKey
+    h = httplib2.Http(".cache")
+    (resp_headers, content) = h.request(distanceURL, "GET")
+    contentJSON = json.loads(content)
+    travelTime = contentJSON['rows'][0]['elements'][0]['duration']['value']
+    return travelTime
+
+def ignoreEvent():
+    ignoredEvents.append(eventUID)
+    return
 
 def get_credentials():
     """Gets valid user credentials from storage.
@@ -73,49 +102,69 @@ def get_credentials():
     return credentials
 
 def playSound():
-    command ="aplay" + " " + sound 
-    os.system(command)
+    global case
+    case = 'sleep'
+    args = ["aplay",sound]
+    alarm = subprocess.Popen(args)
+    global button
+    button.when_pressed = alarm.terminate
+    button.when_released = ignoreEvent
     return
 
-def checkCalendar(service):
+
+
+def checkCalendar():
+    global case
+    case = 'sleep'
+
+    credentials = get_credentials()
+    http = credentials.authorize(httplib2.Http())
+    service = discovery.build('calendar', 'v3', http=http)
+
     now = datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
-    nowpt = time.strftime('%Y-%m-%d %H:%M:%S')
+    nowpt =(datetime.now()+timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S')
     today,nowts = nowpt.split()
     nowts = datetime.strptime(nowts,'%H:%M:%S')
-    #print("Current time", nowpt)
-    alarming = False
 
-    #print('Getting the upcoming 10 events')
     eventsResult = service.events().list(
-        calendarId=calendar, timeMin=now, maxResults=10, singleEvents=True,
+        calendarId=calendar, timeMin=now, maxResults=2, singleEvents=True,
         orderBy='startTime').execute()
 
     events = eventsResult.get('items', [])
     for event in events:
+        eventLocation = event.get('location','Rybnik')
+        global eventUID
+        eventUID = event.get('iCalUID')
+        travelTime = travelTimeTo(eventLocation) if eventLocation != 'Rybnik' else  0
         start = event['start'].get('dateTime', event['start'].get('date'))
         if len(start)<12: continue # all day event
-        day,ts=start.split('T')
-        sts  = datetime.strptime(ts.split('-')[0],'%H:%M:%S')
-        #print(start, event['summary'], (sts-nowts).seconds)
-        if day == today and (sts-nowts).seconds <= 300:
+        eventDay,est=start.split('T')
+        ests = datetime.strptime(est.split('+')[0],'%H:%M:%S')
+        alarmTime = travelTime + reminderTime
+        if eventDay == today and (ests-nowts).seconds <= alarmTime and eventUID not in ignoredEvents:
             print(nowpt,"Sounding alarm for ", start, event['summary'])
-            playSound()
-            return  
+            case = 'playSound'
+            return
 
+def switch():
+    return {
+        'playSound': playSound,
+        'checkCalendar': checkCalendar,
+        'sleep': sleep
+    }[case]()
+
+def sleep():
+    global case
+    case = 'checkCalendar'
+    #print('sleeping')
+    time.sleep(sleepTime)
+    return
+
+calendarReady()
 
 def main():
-    """Shows basic usage of the Google Calendar API.
-
-    Creates a Google Calendar API service object and outputs a list of the next
-    10 events on the user's calendar.
-    """
-    credentials = get_credentials()
-    http = credentials.authorize(httplib2.Http())
-    service = discovery.build('calendar', 'v3', http=http)
     while True:
-      checkCalendar(service)
-      time.sleep(60)
-
+      switch()
 
 if __name__ == '__main__':
     main()
