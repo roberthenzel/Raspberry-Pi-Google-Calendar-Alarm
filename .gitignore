@@ -6,8 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
+*.json
+
 # Distribution / packaging
 .Python
+sounds/
 env/
 build/
 develop-eggs/
